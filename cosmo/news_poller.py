@@ -28,13 +28,19 @@ class NewsPoller:
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row
         
-        # Get API key from environment or parameter
-        if not api_key:
-            from cosmo.config import load_provider_config
-            config = load_provider_config()
-            api_key = config.finnhub_api_key
-        
+        # Load API key: from parameter, environment, or .env config
         self.api_key = api_key
+        if not self.api_key:
+            import os
+            self.api_key = os.environ.get("FINNHUB_API_KEY")
+        if not self.api_key:
+            try:
+                from cosmo.config import load_provider_config
+                config = load_provider_config()
+                self.api_key = config.finnhub_api_key
+            except:
+                logger.warning("Could not load Finnhub API key from config")
+        
         self._ensure_dedup_table()
     
     def _ensure_dedup_table(self):

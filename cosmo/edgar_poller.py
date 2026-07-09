@@ -56,23 +56,22 @@ class EDGARPoller:
     def fetch_recent_filings(self) -> List[Dict[str, Any]]:
         """
         Fetch recent 8-K, Form 4, and 10-K/10-Q filings from EDGAR.
-        Uses the free SEC EDGAR JSON search API.
+        Uses the free SEC EFTS full-text search API (CGI endpoint deprecated).
         """
         filings = []
         
-        # SEC EDGAR free endpoint: search for recent filings
+        # SEC EFTS full-text search endpoint (free, no auth required)
         try:
-            # Simple approach: fetch 10 most recent 8-K filings
-            url = "https://www.sec.gov/cgi-bin/browse-edgar"
+            url = "https://efts.sec.gov/LATEST/search-index"
             
+            today = datetime.now().strftime("%Y-%m-%d")
             for form_type in ["8-K", "4", "10-K", "10-Q"]:
                 params = {
-                    "action": "getcompany",
-                    "type": form_type,
-                    "dateb": datetime.now().strftime("%Y%m%d"),
-                    "owner": "exclude",
-                    "count": 5,
-                    "output": "json"
+                    "q": f'"{form_type}"',
+                    "forms": form_type,
+                    "dateRange": "custom",
+                    "startdt": today,
+                    "enddt": today
                 }
                 
                 response = requests.get(url, params=params, timeout=5)
@@ -114,14 +113,14 @@ class EDGARPoller:
         Ingest fetched filings into the ledger and triage pipeline.
         """
         from cosmo.ledger import CosmoLedger
-        from cosmo.forager import Forager
+        from cosmo.forager import ForagerEngine
         
         if not filings:
             logger.info("No new filings to ingest.")
             return
         
         ledger = CosmoLedger(self.db_path)
-        forager = Forager(ledger)
+        forager = ForagerEngine(ledger)
         
         for filing in filings:
             accession = filing["accession_number"]
