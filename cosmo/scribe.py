@@ -45,6 +45,7 @@ class RealityScribe:
         evidence_json: Optional[Dict[str, Any]] = None,
         reasoning_trace: Optional[str] = None,
         notes: Optional[str] = None,
+        proposer: str = "tyr",
     ) -> int:
         """
         Log a human decision to the reality ledger.
@@ -71,8 +72,8 @@ class RealityScribe:
             INSERT INTO reality_ledger (
                 ticker, trigger_event, causal_mechanism, action_taken,
                 evidence_tag, physical_dependency, evidence_json,
-                reasoning_trace, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                reasoning_trace, notes, proposer
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             ticker,
             trigger_event,
@@ -83,6 +84,7 @@ class RealityScribe:
             evidence_str,
             reasoning_trace,
             notes,
+            proposer,
         ))
         
         self.conn.commit()
@@ -168,7 +170,111 @@ class RealityScribe:
         
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_proposer_scorecard(self, proposer: str) -> Dict[str, Any]:
+        """
+        Get performance metrics for a proposer (seat).
+        Meritocracy becomes measurable: every seat gets graded.
+        """
+        cursor = self.conn.cursor()
+        
+        cursor.execute("""
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN truth_score >= 0.5 THEN 1 ELSE 0 END) as wins,
+                   AVG(truth_score) as avg_truth_score
+            FROM reality_ledger
+            WHERE proposer = ? AND truth_score IS NOT NULL
+        """, (proposer,))
+        
+        row = cursor.fetchone()
+        if not row:
+            return {
+                'proposer': proposer,
+                'total': 0,
+                'wins': 0,
+                'win_rate': 0.0,
+                'avg_truth_score': None
+            }
+        
+        total = row[0] or 0
+        wins = row[1] or 0
+        win_rate = (wins / total) if total > 0 else 0.0
+        
+        return {
+            'proposer': proposer,
+            'total': total,
+            'wins': wins,
+            'win_rate': win_rate,
+            'avg_truth_score': row[2]
+        }
+    
+    def list_all_proposers(self) -> List[str]:
+        """Get list of all proposers in the ledger."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT DISTINCT proposer FROM reality_ledger ORDER BY proposer")
+        return [row[0] for row in cursor.fetchall()]
+    
+    def update_shadow_outcome(
+        self,
+        shadow_id: int,
+        outcome_1d: Optional[float] = None,
+        outcome_3d: Optional[float] = None,
+        outcome_5d: Optional[float] = None,
+        outcome_10d: Optional[float] = None,
+        shadow_truth_score: Optional[float] = None,
+        notes: Optional[str] = None,
+    ) -> bool:
+        """Update shadow ledger entry with actual outcomes."""
+        cursor = self.conn.cursor()
+        
+        updates = []
+        params = []
+        
+        if outcome_1d is not None:
+            updates.append("outcome_1d = ?")
+            params.append(outcome_1d)
+        if outcome_3d is not None:
+            updates.append("outcome_3d = ?")
+            params.append(outcome_3d)
+        if outcome_5d is not None:
+            updates.append("outcome_5d = ?")
+            params.append(outcome_5d)
+        if outcome_10d is not None:
+            updates.append("outcome_10d = ?")
+            params.append(outcome_10d)
+        if shadow_truth_score is not None:
+            updates.append("shadow_truth_score = ?")
+            params.append(shadow_truth_score)
+        if notes is not None:
+            updates.append("audit_notes = ?")
+            params.append(notes)
+        
+        if not updates:
+            return False
+        
+        params.append(shadow_id)
+        query = f"UPDATE shadow_ledger SET {', '.join(updates)} WHERE id = ?"
+        cursor.execute(query, params)
+        self.conn.commit()
+        
+        return cursor.rowcount > 0
+    
+    def list_shadow_misses(self, threshold: float = 0.05) -> List[Dict[str, Any]]:
+        """
+        List shadow-ledger entries that were expensive misses:
+        discarded events that later moved significantly in price.
+        shadow_truth_score < 0.5 means we wrongly discarded something valuable.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT * FROM shadow_ledger 
+            WHERE shadow_truth_score IS NOT NULL AND shadow_truth_score < 0.5
+            ORDER BY outcome_5d DESC LIMIT 20
+        """)
+        
+        return [dict(row) for row in cursor.fetchall()]
+
     def close(self):
+        """Close database connection."""
         self.conn.close()
 
 
@@ -186,6 +292,7 @@ def main():
     log_parser.add_argument("--physical-dep", help="Physical dependency (bottleneck)")
     log_parser.add_argument("--reasoning", help="Chain-of-thought explanation")
     log_parser.add_argument("--notes", help="Additional notes")
+    log_parser.add_argument("--proposer", default="tyr", help="Proposer/seat name")
     
     # LIST command: view decisions
     list_parser = subparsers.add_parser("list", help="List recent decisions")
@@ -204,6 +311,23 @@ def main():
     failures_parser = subparsers.add_parser("failures", help="Find past failures by causal mechanism")
     failures_parser.add_argument("--mechanism", required=True, help="Causal mechanism to check")
     
+    # SCORECARD command: meritocracy metrics for a proposer
+    scorecard_parser = subparsers.add_parser("scorecard", help="Get performance metrics for a proposer/seat")
+    scorecard_parser.add_argument("--proposer", help="Proposer name (optional; if omitted, shows all)")
+    
+    # SHADOW command: manage shadow ledger (discarded events)
+    shadow_parser = subparsers.add_parser("shadow", help="Manage shadow ledger (discarded events)")
+    shadow_subparsers = shadow_parser.add_subparsers(dest="shadow_command")
+    
+    shadow_update = shadow_subparsers.add_parser("update", help="Update shadow entry with outcome")
+    shadow_update.add_argument("--id", type=int, required=True, help="Shadow ledger ID")
+    shadow_update.add_argument("--outcome-1d", type=float, help="1-day return (as decimal)")
+    shadow_update.add_argument("--outcome-5d", type=float, help="5-day return (as decimal)")
+    shadow_update.add_argument("--truth-score", type=float, help="Shadow truth score (0.0-1.0)")
+    shadow_update.add_argument("--notes", help="Audit notes")
+    
+    shadow_report = shadow_subparsers.add_parser("report", help="Show expensive misses (what we discarded that moved)")
+
     args = parser.parse_args()
     
     scribe = RealityScribe()
@@ -218,12 +342,14 @@ def main():
             physical_dependency=args.physical_dep,
             reasoning_trace=args.reasoning,
             notes=args.notes,
+            proposer=args.proposer,
         )
         print(f"✓ Decision logged (ID: {ledger_id})")
         print(f"  Ticker: {args.ticker}")
         print(f"  Trigger: {args.trigger}")
         print(f"  Mechanism: {args.mechanism}")
         print(f"  Action: {args.action}")
+        print(f"  Proposer: {args.proposer}")
         print(f"  Timestamp: {datetime.utcnow().isoformat()}")
     
     elif args.command == "list":
@@ -259,6 +385,52 @@ def main():
             for f in failures:
                 print(f"  ID {f['id']}: {f['ticker']} - {f['trigger_event']}")
                 print(f"    Action: {f['action_taken']}, Truth Score: {f['truth_score']}, 1D Return: {f['outcome_1d']}")
+    
+    elif args.command == "scorecard":
+        if args.proposer:
+            # Single proposer scorecard
+            card = scribe.get_proposer_scorecard(args.proposer)
+            print(f"\nSCORECARD: {card['proposer']}")
+            print(f"  Total Decisions: {card['total']}")
+            print(f"  Wins (truth_score >= 0.5): {card['wins']}")
+            print(f"  Win Rate: {card['win_rate']:.1%}")
+            print(f"  Avg Truth Score: {card['avg_truth_score']:.2f if card['avg_truth_score'] else 'N/A'}")
+        else:
+            # All proposers scorecard
+            proposers = scribe.list_all_proposers()
+            print("\nMERITOCRACY SCORECARD (All Proposers):")
+            print(f"{'Proposer':<20} {'Total':<8} {'Wins':<8} {'Win Rate':<12} {'Avg Truth':<12}")
+            print("-" * 60)
+            for proposer in proposers:
+                card = scribe.get_proposer_scorecard(proposer)
+                avg_score = f"{card['avg_truth_score']:.2f}" if card['avg_truth_score'] else "N/A"
+                print(f"{card['proposer']:<20} {card['total']:<8} {card['wins']:<8} {card['win_rate']:>10.1%}  {avg_score:>10}")
+    
+    elif args.command == "shadow":
+        if args.shadow_command == "update":
+            success = scribe.update_shadow_outcome(
+                shadow_id=args.id,
+                outcome_1d=args.outcome_1d,
+                outcome_5d=args.outcome_5d,
+                shadow_truth_score=args.truth_score,
+                notes=args.notes,
+            )
+            if success:
+                print(f"✓ Shadow entry {args.id} updated")
+            else:
+                print(f"✗ Could not find shadow entry {args.id}")
+        
+        elif args.shadow_command == "report":
+            misses = scribe.list_shadow_misses()
+            if not misses:
+                print("✓ No expensive misses found. Triage gate calibrated well.")
+            else:
+                print(f"\n⚠ EXPENSIVE MISSES (Events we discarded that moved significantly):")
+                print(f"\nTotal misses found: {len(misses)}")
+                print(f"{'ID':<5} {'Ticker':<10} {'Triage Score':<15} {'5D Outcome':<15} {'Truth':<8}")
+                print("-" * 60)
+                for m in misses:
+                    print(f"{m['id']:<5} {str(m['ticker']):<10} {m['triage_score']:<15.3f} {m['outcome_5d']:>+14.1%} {m['shadow_truth_score']:<8.2f}")
     
     scribe.close()
 

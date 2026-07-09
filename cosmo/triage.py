@@ -1,4 +1,6 @@
 from typing import Any, Dict
+import json
+import sqlite3
 
 
 class TriageOrchestrator:
@@ -27,12 +29,43 @@ class TriageOrchestrator:
             weighted_score *= 0.75
 
         wake_swarm = weighted_score >= 0.7
+        route = self._route(event, wake_swarm)
+        reason = self._reason(event, weighted_score)
+        
+        # If discarded, log to shadow_ledger for later grading
+        if not wake_swarm:
+            self._log_shadow_discard(event, weighted_score, reason)
+        
         return {
             "score": round(weighted_score, 3),
             "wake_swarm": wake_swarm,
-            "route": self._route(event, wake_swarm),
-            "reason": self._reason(event, weighted_score),
+            "route": route,
+            "reason": reason,
         }
+
+    def _log_shadow_discard(self, event: Dict[str, Any], score: float, reason: str) -> None:
+        """Log a discarded event to shadow_ledger for later outcome grading."""
+        try:
+            with sqlite3.connect(self.ledger.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO shadow_ledger (
+                        ticker, event_source, event_type, event_summary,
+                        event_payload, triage_score, discard_reason
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    event.get("entity") or event.get("ticker"),
+                    event.get("source"),
+                    event.get("event_type"),
+                    event.get("summary"),
+                    json.dumps(event),
+                    score,
+                    reason
+                ))
+                conn.commit()
+        except Exception as e:
+            # Silent fail; shadow logging is non-critical
+            pass
 
     def _route(self, event: Dict[str, Any], wake_swarm: bool) -> str:
         if not wake_swarm:

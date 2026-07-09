@@ -28,6 +28,7 @@ class ReconciliationEngine:
                     notes TEXT,
                     cost_of_error REAL,
                     death_certificate TEXT,
+                    proposer TEXT NOT NULL DEFAULT 'tyr',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
@@ -43,14 +44,15 @@ class ReconciliationEngine:
         actual_outcome: str,
         correctness_split: Dict[str, float],
         trade_type: str,
+        proposer: str = "tyr",
     ) -> int:
         with sqlite3.connect(self.ledger.db_path) as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO trades (
                     ticker, thesis, trigger, expected_window, actual_outcome,
-                    correctness_split, trade_type
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    correctness_split, trade_type, proposer
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     ticker,
@@ -60,6 +62,7 @@ class ReconciliationEngine:
                     actual_outcome,
                     json.dumps(correctness_split),
                     trade_type,
+                    proposer,
                 ),
             )
             conn.commit()

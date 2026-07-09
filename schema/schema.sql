@@ -90,9 +90,45 @@ CREATE TABLE IF NOT EXISTS reality_ledger (
     truth_score REAL,                      -- Graded vs Reality (0.0-1.0)
     notes TEXT,                            -- Human notes on why this succeeded/failed
     
+    -- Meritocracy (Proposer tracking for seat performance)
+    proposer TEXT NOT NULL DEFAULT 'tyr',  -- Which seat proposed this decision
+    
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_reality_ledger_ticker ON reality_ledger(ticker);
 CREATE INDEX IF NOT EXISTS idx_reality_ledger_causal_mechanism ON reality_ledger(causal_mechanism);
 CREATE INDEX IF NOT EXISTS idx_reality_ledger_trigger_event ON reality_ledger(trigger_event);
+CREATE INDEX IF NOT EXISTS idx_reality_ledger_proposer ON reality_ledger(proposer);
+
+-- SHADOW LEDGER: Grading the discards (every event triage rejects, logged for later analysis)
+CREATE TABLE IF NOT EXISTS shadow_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ticker TEXT,
+    
+    -- The discarded event (raw payload)
+    event_source TEXT,                     -- e.g., 'edgar', 'news', 'price'
+    event_type TEXT,                       -- e.g., 'filing', 'headline', 'alert'
+    event_summary TEXT,
+    event_payload TEXT,                    -- Full JSON of the event
+    
+    -- Triage decision
+    triage_score REAL,                     -- The score that caused the discard
+    discard_reason TEXT,                   -- Why was it rejected? (e.g., "score < 0.75")
+    
+    -- Outcome (graded later via manual update or price feed)
+    outcome_1d REAL,                       -- 1-day return %
+    outcome_3d REAL,                       -- 3-day return %
+    outcome_5d REAL,                       -- 5-day return %
+    outcome_10d REAL,                      -- 10-day return %
+    
+    -- Grading
+    shadow_truth_score REAL,               -- Did we miss something valuable? (0=expensive miss, 1=correct discard)
+    audit_notes TEXT,                      -- Why we were wrong/right to discard
+    
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_shadow_ledger_ticker ON shadow_ledger(ticker);
+CREATE INDEX IF NOT EXISTS idx_shadow_ledger_triage_score ON shadow_ledger(triage_score);

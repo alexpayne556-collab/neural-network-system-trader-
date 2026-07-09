@@ -24,6 +24,8 @@ class VetoRationale:
     confidence: float  # 0.0-1.0
     similar_failures: int
     success_rate: float
+    expectancy: float = 0.0  # Expected return (mean of outcomes)
+    sample_size: int = 0  # Number of trials
 
 
 class GhostListener:
@@ -43,22 +45,26 @@ class GhostListener:
     def analyze_causal_mechanism(self, causal_mechanism: str) -> Dict[str, Any]:
         """
         Analyze past performance of a causal mechanism.
+        Uses EXPECTANCY (mean of outcomes) as primary metric, not just win-rate.
         
         Returns:
             {
                 'total_attempts': int,
-                'successful': int,
+                'successful': int,  (truth_score >= 0.5)
                 'failed': int,
                 'success_rate': float,
+                'expectancy': float,  (mean of outcome_1d or outcome_5d)
                 'avg_truth_score': float,
                 'recent_failures': list of dicts
             }
         """
         cursor = self.conn.cursor()
         
-        # Get all decisions with this mechanism
+        # Get all decisions with this mechanism (prefer outcome_5d, fall back to outcome_1d)
         cursor.execute("""
-            SELECT * FROM reality_ledger 
+            SELECT *, 
+                   COALESCE(outcome_5d, outcome_1d) as outcome_used
+            FROM reality_ledger 
             WHERE causal_mechanism = ? 
             ORDER BY created_at DESC
         """, (causal_mechanism,))
@@ -70,15 +76,20 @@ class GhostListener:
                 'total_attempts': 0,
                 'successful': 0,
                 'failed': 0,
-                'success_rate': 0.5,  # Default neutral
+                'success_rate': 0.5,
+                'expectancy': 0.0,
                 'avg_truth_score': 0.5,
                 'recent_failures': []
             }
         
-        # Calculate success metrics
+        # Calculate success metrics (truth_score based)
         successful = sum(1 for d in all_decisions if d['truth_score'] and d['truth_score'] >= 0.5)
         failed = len(all_decisions) - successful
         success_rate = successful / len(all_decisions) if all_decisions else 0.5
+        
+        # Calculate EXPECTANCY: mean of realized outcomes (in %, as decimal)
+        outcomes = [d['outcome_used'] for d in all_decisions if d['outcome_used'] is not None]
+        expectancy = sum(outcomes) / len(outcomes) if outcomes else 0.0
         
         truth_scores = [d['truth_score'] for d in all_decisions if d['truth_score']]
         avg_truth_score = sum(truth_scores) / len(truth_scores) if truth_scores else 0.5
@@ -91,6 +102,7 @@ class GhostListener:
             'successful': successful,
             'failed': failed,
             'success_rate': success_rate,
+            'expectancy': expectancy,
             'avg_truth_score': avg_truth_score,
             'recent_failures': recent_failures
         }
@@ -104,6 +116,8 @@ class GhostListener:
     ) -> VetoRationale:
         """
         Evaluate whether Ghost should veto this proposal.
+        PRIMARY DECIDER: EXPECTANCY (mean of past outcomes)
+        SECONDARY: win-rate and recency
         
         Args:
             causal_mechanism: The mechanism being proposed (e.g., "AI-HBM-Copper-Melt")
@@ -112,62 +126,91 @@ class GhostListener:
             trigger_event: What triggered this proposal
         
         Returns:
-            VetoRationale with recommendation
+            VetoRationale with recommendation (includes expectancy calculation)
         """
         analysis = self.analyze_causal_mechanism(causal_mechanism)
+        sample_size = analysis['total_attempts']
+        expectancy = analysis['expectancy']
         
-        # Rule 1: If no history, allow with caution
-        if analysis['total_attempts'] == 0:
+        # Rule 1: If no history, allow with caution (NOVEL)
+        if sample_size == 0:
             return VetoRationale(
                 should_veto=False,
-                reason=f"Novel mechanism: {causal_mechanism} (no prior history)",
+                reason=f"Novel mechanism: {causal_mechanism} (no prior history; small-size recommended)",
                 confidence=0.3,
                 similar_failures=0,
-                success_rate=0.5
+                success_rate=0.5,
+                expectancy=0.0,
+                sample_size=0
             )
         
-        # Rule 2: If repeated failures, veto
-        if analysis['success_rate'] < self.failure_threshold:
-            failure_ratio = f"{analysis['failed']}/{analysis['total_attempts']}"
+        # Rule 2: Insufficient sample, but show metrics if available
+        if sample_size < 3:
+            flag = "⚠ INSUFFICIENT DATA" if expectancy <= 0 else "✓ PROVISIONAL"
             reason = (
-                f"VETO: Mechanism '{causal_mechanism}' has poor track record: "
-                f"{failure_ratio} failures (success rate: {analysis['success_rate']:.1%}). "
-                f"Recent attempts failed."
-            )
-            return VetoRationale(
-                should_veto=True,
-                reason=reason,
-                confidence=min(1.0, 0.6 + (1.0 - analysis['success_rate'])),
-                similar_failures=analysis['failed'],
-                success_rate=analysis['success_rate']
-            )
-        
-        # Rule 3: If marginal success and recent failures, caution
-        if analysis['success_rate'] < 0.6 and analysis['recent_failures']:
-            reason = (
-                f"CAUTION: Mechanism '{causal_mechanism}' has marginal performance "
-                f"({analysis['success_rate']:.1%} success rate) with recent failures. "
-                f"Consider alternative approaches."
+                f"{flag}: Mechanism '{causal_mechanism}' has limited track record "
+                f"({sample_size} attempts, expectancy: {expectancy:+.2%}). "
+                f"Suggest small position or wait for more data."
             )
             return VetoRationale(
                 should_veto=False,
                 reason=reason,
-                confidence=0.7,
-                similar_failures=len(analysis['recent_failures']),
-                success_rate=analysis['success_rate']
+                confidence=0.5,
+                similar_failures=analysis['failed'],
+                success_rate=analysis['success_rate'],
+                expectancy=expectancy,
+                sample_size=sample_size
             )
         
-        # Rule 4: If mechanism has proven track record, allow
+        # Rule 3: EXPECTANCY-PRIMARY decision
+        # If expectancy > 0: APPROVED (mechanism has positive expected value)
+        if expectancy > 0:
+            # Escalation: recent consecutive failures override positive expectancy
+            if len(analysis['recent_failures']) >= 2:
+                reason = (
+                    f"CAUTION: Mechanism '{causal_mechanism}' shows positive expectancy "
+                    f"({expectancy:+.2%}) but recent attempts failed ({len(analysis['recent_failures'])} of last 5). "
+                    f"Market conditions may have shifted. Suggest review before trading."
+                )
+                return VetoRationale(
+                    should_veto=False,  # Don't veto, but warn
+                    reason=reason,
+                    confidence=0.6,
+                    similar_failures=len(analysis['recent_failures']),
+                    success_rate=analysis['success_rate'],
+                    expectancy=expectancy,
+                    sample_size=sample_size
+                )
+            
+            reason = (
+                f"APPROVED: Mechanism '{causal_mechanism}' has positive expectancy "
+                f"({expectancy:+.2%}) over {sample_size} attempts. "
+                f"Win rate: {analysis['success_rate']:.1%}. Trade with full sizing."
+            )
+            return VetoRationale(
+                should_veto=False,
+                reason=reason,
+                confidence=min(0.95, 0.5 + abs(expectancy)),
+                similar_failures=analysis['failed'],
+                success_rate=analysis['success_rate'],
+                expectancy=expectancy,
+                sample_size=sample_size
+            )
+        
+        # Rule 4: EXPECTANCY <= 0: VETO (negative or zero expected value)
         reason = (
-            f"APPROVED: Mechanism '{causal_mechanism}' has established track record "
-            f"({analysis['success_rate']:.1%} success rate over {analysis['total_attempts']} attempts)"
+            f"🔒 VETO: Mechanism '{causal_mechanism}' has non-positive expectancy "
+            f"({expectancy:+.2%}) over {sample_size} attempts. "
+            f"Win rate: {analysis['success_rate']:.1%}. Expected value is negative."
         )
         return VetoRationale(
-            should_veto=False,
+            should_veto=True,
             reason=reason,
-            confidence=min(analysis['success_rate'], 0.95),
+            confidence=min(1.0, 0.8 + abs(expectancy)),
             similar_failures=analysis['failed'],
-            success_rate=analysis['success_rate']
+            success_rate=analysis['success_rate'],
+            expectancy=expectancy,
+            sample_size=sample_size
         )
 
     def check_ticker_causal_cascade(self, ticker: str) -> Dict[str, Any]:
