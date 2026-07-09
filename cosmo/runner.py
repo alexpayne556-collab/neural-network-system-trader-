@@ -109,5 +109,41 @@ if __name__ == "__main__":
     parser.add_argument("--loop", action="store_true", help="Run continuously until interrupted")
     parser.add_argument("--iterations", type=int, default=1, help="Number of cycles to run when not looping")
     parser.add_argument("--sleep", type=float, default=2.0, help="Seconds to wait between loop cycles")
+    
+    # Data feed options
+    parser.add_argument("--edgar", action="store_true", help="Start EDGAR poller")
+    parser.add_argument("--news", action="store_true", help="Start Finnhub news poller")
+    parser.add_argument("--interval", type=int, default=120, help="Polling interval in seconds (for feeds)")
+    parser.add_argument("--dry-run", action="store_true", help="Preview data without storing")
+    
     args = parser.parse_args()
-    main(loop=args.loop, iterations=args.iterations, sleep_seconds=args.sleep)
+    
+    # If running data feeds, start them instead of main loop
+    if args.edgar:
+        from cosmo.edgar_poller import EDGARPoller
+        poller = EDGARPoller()
+        try:
+            if args.dry_run:
+                filings = poller.fetch_recent_filings()
+                print(f"[DRY RUN] Would ingest {len(filings)} filings")
+                for f in filings:
+                    print(f"  {f['form_type']}: {f['description']}")
+            else:
+                poller.poll(interval=args.interval)
+        finally:
+            poller.close()
+    elif args.news:
+        from cosmo.news_poller import NewsPoller
+        poller = NewsPoller()
+        try:
+            if args.dry_run:
+                headlines = poller.fetch_headlines()
+                print(f"[DRY RUN] Would ingest {len(headlines)} headlines")
+                for h in headlines:
+                    print(f"  {h['description'][:60]}")
+            else:
+                poller.poll(interval=args.interval)
+        finally:
+            poller.close()
+    else:
+        main(loop=args.loop, iterations=args.iterations, sleep_seconds=args.sleep)

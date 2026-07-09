@@ -11,6 +11,10 @@ class CosmoLedger:
         self.db_path = db_path or os.path.join(os.getcwd(), "cosmo.sqlite")
         self._initialize()
 
+    def close(self) -> None:
+        """No-op for API consistency with other components."""
+        pass
+
     def _initialize(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
