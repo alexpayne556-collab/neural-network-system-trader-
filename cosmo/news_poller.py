@@ -130,38 +130,40 @@ class NewsPoller:
         Ingest fetched headlines into the ledger and triage pipeline.
         """
         from cosmo.ledger import CosmoLedger
-        from cosmo.forager import Forager
-        
+        from cosmo.forager import ForagerEngine
+
         if not headlines:
             logger.info("No new headlines to ingest.")
             return
-        
+
         ledger = CosmoLedger(self.db_path)
-        forager = Forager(ledger)
-        
+        forager = ForagerEngine(ledger)
+
         for headline in headlines:
             article_id = headline["article_id"]
-            
+
             if self._has_seen(article_id):
                 continue
-            
+
             if dry_run:
                 logger.info(f"[DRY RUN] Would ingest: {headline['description'][:60]}...")
             else:
                 try:
-                    # Log raw event
+                    # Log raw event (entity = the ticker the headline is about)
                     event_id = ledger.log_raw_event(
                         source="finnhub_news",
                         event_type="news",
+                        entity=headline.get("ticker") or "UNKNOWN",
                         summary=headline["description"],
-                        tags=["news"]
+                        payload=headline,
                     )
-                    
-                    # Ingest through forager/triage
+
+                    # Ingest through forager/triage (returns {"event":..., "triage":...})
                     result = forager.ingest_event(headline)
-                    status = "WAKE" if result[0]["wake_swarm"] else "DISCARD"
-                    logger.info(f"[{status}] {headline['description'][:50]}... (score={result[0]['score']:.2f})")
-                    
+                    triage = result["triage"]
+                    status = "WAKE" if triage["wake_swarm"] else "DISCARD"
+                    logger.info(f"[{status}] {headline['description'][:50]}... (score={triage['score']:.2f})")
+
                     self._mark_seen(article_id)
                 
                 except Exception as e:

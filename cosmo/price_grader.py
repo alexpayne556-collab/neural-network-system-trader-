@@ -62,7 +62,7 @@ class PriceGrader:
         try:
             bars = self.api.get_bars(
                 ticker,
-                "1d",
+                "1Day",
                 start=start_date,
                 end=end_date,
                 adjustment="all"
@@ -102,7 +102,7 @@ class PriceGrader:
             if not bars:
                 return None
             
-            entry_price = bars[0]["c"]  # Close of entry day
+            entry_price = bars[0]["close"]  # Close of entry day
             
             returns = {
                 "outcome_1d": None,
@@ -113,13 +113,13 @@ class PriceGrader:
             
             # Calculate returns at each horizon
             if len(bars) > 1:
-                returns["outcome_1d"] = (bars[1]["c"] - entry_price) / entry_price
+                returns["outcome_1d"] = (bars[1]["close"] - entry_price) / entry_price
             if len(bars) > 3:
-                returns["outcome_3d"] = (bars[3]["c"] - entry_price) / entry_price
+                returns["outcome_3d"] = (bars[3]["close"] - entry_price) / entry_price
             if len(bars) > 5:
-                returns["outcome_5d"] = (bars[5]["c"] - entry_price) / entry_price
+                returns["outcome_5d"] = (bars[5]["close"] - entry_price) / entry_price
             if len(bars) > 10:
-                returns["outcome_10d"] = (bars[10]["c"] - entry_price) / entry_price
+                returns["outcome_10d"] = (bars[10]["close"] - entry_price) / entry_price
             
             return returns
         

@@ -81,9 +81,11 @@ CREATE TABLE IF NOT EXISTS reality_ledger (
     reasoning_trace TEXT,                  -- Full trace from human or council
     action_taken TEXT NOT NULL,            -- BUY, SELL, HOLD, PASS
     
-    -- Outcome (Ground Truth)
+    -- Outcome (Ground Truth) — full horizon set graded by price_grader
     outcome_1d REAL,                       -- 1-day return %
+    outcome_3d REAL,                       -- 3-day return %
     outcome_5d REAL,                       -- 5-day return %
+    outcome_10d REAL,                      -- 10-day return %
     outcome_end_period REAL,               -- End of defined period return %
     
     -- Accountability

@@ -1,0 +1,32 @@
+# ── Secrets ─────────────────────────────────────────────
+.env
+.env.*
+*.key
+
+# ── Databases (live + test) ─────────────────────────────
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+cosmo.sqlite
+test_*.sqlite
+
+# ── Test scratch dirs created by tempfile.mkdtemp(dir=".") ─
+cosmo-forager-*/
+cosmo-test-*/
+cosmo-constitution-*/
+
+# ── Python ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# ── Vendored clones (huge, not part of this repo) ───────
+clones/
+
+# ── OS ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

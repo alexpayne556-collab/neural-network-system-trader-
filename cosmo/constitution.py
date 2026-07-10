@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import uuid
@@ -28,7 +29,7 @@ class Constitution:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "INSERT INTO proposals (id, proposal_type, target_entity, thesis, evidence_json, status) VALUES (?, ?, ?, ?, ?, ?)",
-                (proposal_id, proposal_type, target_entity, thesis, repr(evidence_json or {}), "PENDING"),
+                (proposal_id, proposal_type, target_entity, thesis, json.dumps(evidence_json or {}), "PENDING"),
             )
             conn.execute(
                 "INSERT INTO ledger (proposal_id, agent_id, bill_type, justification, evidence_class, status) VALUES (?, ?, ?, ?, ?, ?)",
@@ -48,8 +49,9 @@ class Constitution:
     def add_graveyard_entry(self, ticker: str, cause_of_death: str, strategy_type: str, audit_log_ref: Optional[str] = None) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
-                "INSERT INTO graveyard (ticker, cause_of_death, kill_date, strategy_type, audit_log_ref) VALUES (?, ?, ?, ?, ?)",
-                (ticker, cause_of_death, "CURRENT_TIMESTAMP", strategy_type, audit_log_ref),
+                "INSERT INTO graveyard (ticker, cause_of_death, kill_date, strategy_type, audit_log_ref) "
+                "VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?)",
+                (ticker, cause_of_death, strategy_type, audit_log_ref),
             )
             conn.commit()
 

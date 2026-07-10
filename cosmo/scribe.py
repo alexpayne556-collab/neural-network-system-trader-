@@ -394,7 +394,8 @@ def main():
             print(f"  Total Decisions: {card['total']}")
             print(f"  Wins (truth_score >= 0.5): {card['wins']}")
             print(f"  Win Rate: {card['win_rate']:.1%}")
-            print(f"  Avg Truth Score: {card['avg_truth_score']:.2f if card['avg_truth_score'] else 'N/A'}")
+            avg_score = f"{card['avg_truth_score']:.2f}" if card['avg_truth_score'] is not None else "N/A"
+            print(f"  Avg Truth Score: {avg_score}")
         else:
             # All proposers scorecard
             proposers = scribe.list_all_proposers()

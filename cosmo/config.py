@@ -88,8 +88,10 @@ def load_provider_config(
     doc_values = _extract_from_doc(api_keys_doc_path) if api_keys_doc_path else {}
     dotenv_values = _load_dotenv(env_file_path)
     
-    merged = dict(env)
-    merged.update({k: v for k, v in dotenv_values.items() if v})
+    # Precedence (low -> high): .env fills gaps, explicit env wins over .env,
+    # legacy api-keys doc applied last for backward compatibility.
+    merged = dict(dotenv_values)
+    merged.update({k: v for k, v in env.items() if v})
     merged.update({k: v for k, v in doc_values.items() if v})
 
     return ProviderConfig(
